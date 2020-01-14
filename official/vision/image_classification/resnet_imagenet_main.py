@@ -51,6 +51,9 @@ def run(flags_obj):
   Returns:
     Dictionary of training and eval stats.
   """
+  # DO NOT SUBMIT ONLY FOR TEST
+  for key in dir(flags_obj):
+    print('{} = {}'.format(key, getattr(flags_obj, key)))
   keras_utils.set_session_config(
       enable_eager=flags_obj.enable_eager,
       enable_xla=flags_obj.enable_xla)

@@ -28,6 +28,11 @@ from official.vision.image_classification import resnet_imagenet_main
 MIN_TOP_1_ACCURACY = 0.76
 MAX_TOP_1_ACCURACY = 0.77
 
+TOP_1_ACCURACY = {
+    'RESNET50_FINETUNE_PRUNING': (0.76, 0.77),
+    'MOBILENET_FINETUNE_PRUNING': (0.67, 0.68),
+}
+
 FLAGS = flags.FLAGS
 
 
@@ -1153,6 +1158,167 @@ class Resnet50MultiWorkerKerasBenchmarkReal(Resnet50MultiWorkerKerasBenchmark):
 
     super(Resnet50MultiWorkerKerasBenchmarkReal, self).__init__(
         output_dir=output_dir, default_flags=def_flags)
+
+
+class KerasPruningAccuracyBase(keras_benchmark.KerasBenchmark):
+  """doc string WIP."""
+
+  def __init__(self,
+               output_dir=None,
+               root_data_dir=None,
+               default_flags=None,
+               **kwargs):
+    """A benchmark class.
+
+    Args:
+      output_dir: directory where to output e.g. log files
+      root_data_dir: directory under which to look for dataset
+      default_flags: default flags
+      **kwargs: arbitrary named arguments. This is needed to make the
+                constructor forward compatible in case PerfZero provides more
+                named arguments before updating the constructor.
+    """
+    if default_flags is None:
+      default_flags = {}
+    default_flags['pruning_method'] = 'polynomial_decay'
+    default_flags['pruning_begin_step'] = 0
+    default_flags['pruning_end_step'] = 50000
+    default_flags['pruning_initial_sparsity'] = 0
+    default_flags['pruning_final_sparsity'] = 0.5
+    default_flags['pruning_frequency'] = 100
+
+    default_flags['data_dir'] = os.path.join(root_data_dir, 'imagenet')
+
+    flag_methods = [resnet_imagenet_main.define_imagenet_keras_flags]
+
+    super(KerasPruningAccuracyBase, self).__init__(
+        output_dir=output_dir,
+        flag_methods=flag_methods,
+        default_flags=default_flags,
+        **kwargs)
+
+  def benchmark_8_gpu(self):
+    """Test Keras model with eager, dist_strat and 8 GPUs."""
+    self._setup()
+    FLAGS.num_gpus = 8
+    FLAGS.batch_size = 32 * 8
+    FLAGS.train_epochs = 90
+    FLAGS.epochs_between_evals = 10
+    FLAGS.model_dir = self._get_model_dir('benchmark_8_gpu')
+    FLAGS.dtype = 'fp32'
+    FLAGS.enable_eager = True
+    # Add some thread tunings to improve performance.
+    FLAGS.datasets_num_private_threads = 14
+    FLAGS.use_tensor_lr = True
+    self._run_and_report_benchmark()
+
+  @benchmark_wrappers.enable_runtime_flags
+  def _run_and_report_benchmark(self,
+                                top_1_min=TOP_1_ACCURACY[
+                                    'RESNET50_FINETUNE_PRUNING'][0],
+                                top_1_max=TOP_1_ACCURACY[
+                                    'RESNET50_FINETUNE_PRUNING'][1]):
+    start_time_sec = time.time()
+    stats = resnet_imagenet_main.run(flags.FLAGS)
+    wall_time_sec = time.time() - start_time_sec
+
+    super(KerasPruningAccuracyBase, self)._report_benchmark(
+        stats,
+        wall_time_sec,
+        top_1_min=top_1_min,
+        top_1_max=top_1_max,
+        total_batch_size=FLAGS.batch_size,
+        log_steps=100)
+
+
+class MobilenetKerasPruningAccuracy(KerasPruningAccuracyBase):
+  """doc string WIP."""
+
+  def __init__(self, root_data_dir=None, **kwargs):
+    default_flags = {
+        'model': 'mobilenet',
+        'optimizer': 'mobilenet_default',
+        'pretrained_filepath': tf.train.latest_checkpoint(
+            os.path.join(root_data_dir, 'mobilenet')),
+    }
+    super(MobilenetKerasPruningAccuracy, self).__init__(
+        root_data_dir=root_data_dir,
+        default_flags=default_flags,
+        **kwargs)
+
+  def _run_and_report_benchmark(self):
+    super(MobilenetKerasPruningAccuracy, self)._run_and_report_benchmark(
+        top_1_min=TOP_1_ACCURACY['MOBILENET_FINETUNE_PRUNING'][0],
+        top_1_max=TOP_1_ACCURACY['MOBILENET_FINETUNE_PRUNING'][1])
+
+
+class Resnet50KerasPruningAccuracy(KerasPruningAccuracyBase):
+  """doc string WIP."""
+
+  def __init__(self, root_data_dir=None, **kwargs):
+    default_flags = {
+        'model': 'resnet50_v1.5',
+        'optimizer': 'resnet50_default',
+        'pretrained_filepath': tf.train.latest_checkpoint(
+            os.path.join(root_data_dir, 'resnet50')),
+    }
+    super(Resnet50KerasPruningAccuracy, self).__init__(
+        root_data_dir=root_data_dir,
+        default_flags=default_flags,
+        **kwargs)
+
+  def _run_and_report_benchmark(self):
+    super(Resnet50KerasPruningAccuracy, self)._run_and_report_benchmark(
+        top_1_min=TOP_1_ACCURACY['RESNET50_FINETUNE_PRUNING'][0],
+        top_1_max=TOP_1_ACCURACY['RESNET50_FINETUNE_PRUNING'][1])
+
+
+class KerasPruningBenchmarkRealBase(Resnet50KerasBenchmarkBase):
+  """doc string WIP."""
+
+  def __init__(self, root_data_dir=None, default_flags=None, **kwargs):
+    """doc string WIP."""
+    if default_flags is None:
+      default_flags = {}
+    default_flags.update({
+        'skip_eval': True,
+        'report_accuracy_metrics': False,
+        'data_dir': os.path.join(root_data_dir, 'imagenet'),
+        'train_steps': 110,
+        'log_steps': 10,
+        'pruning_method': 'polynomial_decay',
+        'pruning_begin_step': 0,
+        'pruning_end_step': 50000,
+        'pruning_initial_sparsity': 0,
+        'pruning_final_sparsity': 0.5,
+        'pruning_frequency': 100,
+    })
+    super(KerasPruningBenchmarkRealBase, self).__init__(
+        default_flags=default_flags, **kwargs)
+
+
+class MobilenetKerasPruningBenchmarkReal(KerasPruningBenchmarkRealBase):
+  """doc string WIP."""
+
+  def __init__(self, **kwargs):
+    default_flags = {
+        'model': 'mobilenet',
+        'optimizer': 'mobilenet_default',
+    }
+    super(MobilenetKerasPruningBenchmarkReal, self).__init__(
+        default_flags=default_flags, **kwargs)
+
+
+class Resnet50KerasPruningBenchmarkReal(KerasPruningBenchmarkRealBase):
+  """doc string WIP."""
+
+  def __init__(self, **kwargs):
+    default_flags = {
+        'model': 'resnet50_v1.5',
+        'optimizer': 'resnet50_default',
+    }
+    super(Resnet50KerasPruningBenchmarkReal, self).__init__(
+        default_flags=default_flags, **kwargs)
 
 
 if __name__ == '__main__':
